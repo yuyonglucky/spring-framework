@@ -43,7 +43,6 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.accept.ContentNegotiationManager;
-import org.springframework.web.accept.ContentNegotiationStrategy;
 import org.springframework.web.accept.PathExtensionContentNegotiationStrategy;
 import org.springframework.web.context.request.NativeWebRequest;
 import org.springframework.web.context.request.ServletWebRequest;
@@ -122,12 +121,9 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 	}
 
 	private static PathExtensionContentNegotiationStrategy initPathStrategy(ContentNegotiationManager manager) {
-		for (ContentNegotiationStrategy strategy : manager.getStrategies()) {
-			if (strategy instanceof PathExtensionContentNegotiationStrategy) {
-				return (PathExtensionContentNegotiationStrategy) strategy;
-			}
-		}
-		return new PathExtensionContentNegotiationStrategy();
+		Class<PathExtensionContentNegotiationStrategy> clazz = PathExtensionContentNegotiationStrategy.class;
+		PathExtensionContentNegotiationStrategy strategy = manager.getStrategy(clazz);
+		return (strategy != null ? strategy : new PathExtensionContentNegotiationStrategy());
 	}
 
 
@@ -155,7 +151,7 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 
 	/**
 	 * Writes the given return type to the given output message.
-	 * @param returnValue the value to write to the output message
+	 * @param value the value to write to the output message
 	 * @param returnType the type of the value
 	 * @param inputMessage the input messages. Used to inspect the {@code Accept} header.
 	 * @param outputMessage the output message to write to
@@ -164,18 +160,25 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 	 * the request cannot be met by the message converters
 	 */
 	@SuppressWarnings("unchecked")
-	protected <T> void writeWithMessageConverters(T returnValue, MethodParameter returnType,
+	protected <T> void writeWithMessageConverters(T value, MethodParameter returnType,
 			ServletServerHttpRequest inputMessage, ServletServerHttpResponse outputMessage)
 			throws IOException, HttpMediaTypeNotAcceptableException, HttpMessageNotWritableException {
 
-		Class<?> returnValueClass = getReturnValueType(returnValue, returnType);
-		Type returnValueType = getGenericType(returnType);
+		Class<?> clazz = getReturnValueType(value, returnType);
+		Type type = getGenericType(returnType);
+
+		if (value != null && value instanceof CharSequence) {
+			clazz = String.class;
+			type = String.class;
+			value = (T) value.toString();
+		}
+
 		HttpServletRequest servletRequest = inputMessage.getServletRequest();
 		List<MediaType> requestedMediaTypes = getAcceptableMediaTypes(servletRequest);
-		List<MediaType> producibleMediaTypes = getProducibleMediaTypes(servletRequest, returnValueClass, returnValueType);
+		List<MediaType> producibleMediaTypes = getProducibleMediaTypes(servletRequest, clazz, type);
 
-		if (returnValue != null && producibleMediaTypes.isEmpty()) {
-			throw new IllegalArgumentException("No converter found for return value of type: " + returnValueClass);
+		if (value != null && producibleMediaTypes.isEmpty()) {
+			throw new IllegalArgumentException("No converter found for return value of type: " + clazz);
 		}
 
 		Set<MediaType> compatibleMediaTypes = new LinkedHashSet<MediaType>();
@@ -187,7 +190,7 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 			}
 		}
 		if (compatibleMediaTypes.isEmpty()) {
-			if (returnValue != null) {
+			if (value != null) {
 				throw new HttpMediaTypeNotAcceptableException(producibleMediaTypes);
 			}
 			return;
@@ -212,33 +215,33 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 			selectedMediaType = selectedMediaType.removeQualityValue();
 			for (HttpMessageConverter<?> messageConverter : this.messageConverters) {
 				if (messageConverter instanceof GenericHttpMessageConverter) {
-					if (((GenericHttpMessageConverter<T>) messageConverter).canWrite(returnValueType,
-							returnValueClass, selectedMediaType)) {
-						returnValue = (T) getAdvice().beforeBodyWrite(returnValue, returnType, selectedMediaType,
+					if (((GenericHttpMessageConverter<T>) messageConverter).canWrite(type,
+							clazz, selectedMediaType)) {
+						value = (T) getAdvice().beforeBodyWrite(value, returnType, selectedMediaType,
 								(Class<? extends HttpMessageConverter<?>>) messageConverter.getClass(),
 								inputMessage, outputMessage);
-						if (returnValue != null) {
+						if (value != null) {
 							addContentDispositionHeader(inputMessage, outputMessage);
-							((GenericHttpMessageConverter<T>) messageConverter).write(returnValue,
-									returnValueType, selectedMediaType, outputMessage);
+							((GenericHttpMessageConverter<T>) messageConverter).write(value,
+									type, selectedMediaType, outputMessage);
 							if (logger.isDebugEnabled()) {
-								logger.debug("Written [" + returnValue + "] as \"" +
+								logger.debug("Written [" + value + "] as \"" +
 										selectedMediaType + "\" using [" + messageConverter + "]");
 							}
 						}
 						return;
 					}
 				}
-				else if (messageConverter.canWrite(returnValueClass, selectedMediaType)) {
-					returnValue = (T) getAdvice().beforeBodyWrite(returnValue, returnType, selectedMediaType,
+				else if (messageConverter.canWrite(clazz, selectedMediaType)) {
+					value = (T) getAdvice().beforeBodyWrite(value, returnType, selectedMediaType,
 							(Class<? extends HttpMessageConverter<?>>) messageConverter.getClass(),
 							inputMessage, outputMessage);
-					if (returnValue != null) {
+					if (value != null) {
 						addContentDispositionHeader(inputMessage, outputMessage);
-						((HttpMessageConverter<T>) messageConverter).write(returnValue,
+						((HttpMessageConverter<T>) messageConverter).write(value,
 								selectedMediaType, outputMessage);
 						if (logger.isDebugEnabled()) {
-							logger.debug("Written [" + returnValue + "] as \"" +
+							logger.debug("Written [" + value + "] as \"" +
 									selectedMediaType + "\" using [" + messageConverter + "]");
 						}
 					}
@@ -247,7 +250,7 @@ public abstract class AbstractMessageConverterMethodProcessor extends AbstractMe
 			}
 		}
 
-		if (returnValue != null) {
+		if (value != null) {
 			throw new HttpMediaTypeNotAcceptableException(this.allSupportedMediaTypes);
 		}
 	}

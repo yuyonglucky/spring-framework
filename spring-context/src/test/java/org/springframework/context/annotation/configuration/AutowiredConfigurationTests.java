@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,16 @@
 package org.springframework.context.annotation.configuration;
 
 import java.io.IOException;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.List;
 import java.util.Optional;
 import javax.inject.Provider;
 
 import org.junit.Test;
 
-import org.springframework.beans.factory.BeanCreationException;
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
@@ -36,6 +38,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Scope;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
 import org.springframework.context.support.GenericApplicationContext;
+import org.springframework.core.annotation.AliasFor;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.tests.sample.beans.Colour;
@@ -89,25 +92,60 @@ public class AutowiredConfigurationTests {
 		assertThat(context.getBean(TestBean.class).getName(), equalTo(""));
 	}
 
-	/**
-	 * {@link Autowired} constructors are not supported on {@link Configuration} classes
-	 * due to CGLIB constraints
-	 */
-	@Test(expected = BeanCreationException.class)
-	public void testAutowiredConfigurationConstructorsAreNotSupported() {
-		DefaultListableBeanFactory context = new DefaultListableBeanFactory();
-		new XmlBeanDefinitionReader(context).loadBeanDefinitions(
+	@Test
+	public void testAutowiredSingleConstructorSupported() {
+		DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+		new XmlBeanDefinitionReader(factory).loadBeanDefinitions(
 				new ClassPathResource("annotation-config.xml", AutowiredConstructorConfig.class));
-		GenericApplicationContext ctx = new GenericApplicationContext(context);
+		GenericApplicationContext ctx = new GenericApplicationContext(factory);
 		ctx.registerBeanDefinition("config1", new RootBeanDefinition(AutowiredConstructorConfig.class));
 		ctx.registerBeanDefinition("config2", new RootBeanDefinition(ColorConfig.class));
-		ctx.refresh(); // should throw
+		ctx.refresh();
+		assertSame(ctx.getBean(AutowiredConstructorConfig.class).colour, ctx.getBean(Colour.class));
+	}
+
+	@Test
+	public void testObjectFactoryConstructorWithTypeVariable() {
+		DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+		new XmlBeanDefinitionReader(factory).loadBeanDefinitions(
+				new ClassPathResource("annotation-config.xml", ObjectFactoryConstructorConfig.class));
+		GenericApplicationContext ctx = new GenericApplicationContext(factory);
+		ctx.registerBeanDefinition("config1", new RootBeanDefinition(ObjectFactoryConstructorConfig.class));
+		ctx.registerBeanDefinition("config2", new RootBeanDefinition(ColorConfig.class));
+		ctx.refresh();
+		assertSame(ctx.getBean(ObjectFactoryConstructorConfig.class).colour, ctx.getBean(Colour.class));
+	}
+
+	@Test
+	public void testAutowiredAnnotatedConstructorSupported() {
+		DefaultListableBeanFactory factory = new DefaultListableBeanFactory();
+		new XmlBeanDefinitionReader(factory).loadBeanDefinitions(
+				new ClassPathResource("annotation-config.xml", MultipleConstructorConfig.class));
+		GenericApplicationContext ctx = new GenericApplicationContext(factory);
+		ctx.registerBeanDefinition("config1", new RootBeanDefinition(MultipleConstructorConfig.class));
+		ctx.registerBeanDefinition("config2", new RootBeanDefinition(ColorConfig.class));
+		ctx.refresh();
+		assertSame(ctx.getBean(MultipleConstructorConfig.class).colour, ctx.getBean(Colour.class));
 	}
 
 	@Test
 	public void testValueInjection() {
 		ClassPathXmlApplicationContext context = new ClassPathXmlApplicationContext(
 				"ValueInjectionTests.xml", AutowiredConfigurationTests.class);
+		doTestValueInjection(context);
+	}
+
+	@Test
+	public void testValueInjectionWithMetaAnnotation() {
+		AnnotationConfigApplicationContext context =
+				new AnnotationConfigApplicationContext(ValueConfigWithMetaAnnotation.class);
+		doTestValueInjection(context);
+	}
+
+	@Test
+	public void testValueInjectionWithAliasedMetaAnnotation() {
+		AnnotationConfigApplicationContext context =
+				new AnnotationConfigApplicationContext(ValueConfigWithAliasedMetaAnnotation.class);
 		doTestValueInjection(context);
 	}
 
@@ -225,9 +263,37 @@ public class AutowiredConfigurationTests {
 
 		Colour colour;
 
-		@Autowired
+		// @Autowired
 		AutowiredConstructorConfig(Colour colour) {
 			this.colour = colour;
+		}
+	}
+
+
+	@Configuration
+	static class ObjectFactoryConstructorConfig {
+
+		Colour colour;
+
+		// @Autowired
+		ObjectFactoryConstructorConfig(ObjectFactory<Colour> colourFactory) {
+			this.colour = colourFactory.getObject();
+		}
+	}
+
+
+	@Configuration
+	static class MultipleConstructorConfig {
+
+		Colour colour;
+
+		@Autowired
+		MultipleConstructorConfig(Colour colour) {
+			this.colour = colour;
+		}
+
+		MultipleConstructorConfig(String test) {
+			this.colour = new Colour(test);
 		}
 	}
 
@@ -251,6 +317,73 @@ public class AutowiredConfigurationTests {
 		private String name2;
 
 		@Value("#{systemProperties[myProp]}")
+		public void setName2(String name) {
+			this.name2 = name;
+		}
+
+		@Bean @Scope("prototype")
+		public TestBean testBean() {
+			return new TestBean(name);
+		}
+
+		@Bean @Scope("prototype")
+		public TestBean testBean2() {
+			return new TestBean(name2);
+		}
+	}
+
+
+	@Value("#{systemProperties[myProp]}")
+	@Retention(RetentionPolicy.RUNTIME)
+	public @interface MyProp {
+	}
+
+
+	@Configuration
+	@Scope("prototype")
+	static class ValueConfigWithMetaAnnotation {
+
+		@MyProp
+		private String name;
+
+		private String name2;
+
+		@MyProp
+		public void setName2(String name) {
+			this.name2 = name;
+		}
+
+		@Bean @Scope("prototype")
+		public TestBean testBean() {
+			return new TestBean(name);
+		}
+
+		@Bean @Scope("prototype")
+		public TestBean testBean2() {
+			return new TestBean(name2);
+		}
+	}
+
+
+	@Value("")
+	@Retention(RetentionPolicy.RUNTIME)
+	public @interface AliasedProp {
+
+		@AliasFor(annotation = Value.class)
+		String value();
+	}
+
+
+	@Configuration
+	@Scope("prototype")
+	static class ValueConfigWithAliasedMetaAnnotation {
+
+		@AliasedProp("#{systemProperties[myProp]}")
+		private String name;
+
+		private String name2;
+
+		@AliasedProp("#{systemProperties[myProp]}")
 		public void setName2(String name) {
 			this.name2 = name;
 		}

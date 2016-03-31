@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -81,13 +81,12 @@ abstract class ContextLoaderUtils {
 	 * (must not be {@code null})
 	 * @return the list of lists of configuration attributes for the specified class;
 	 * never {@code null}
-	 * @throws IllegalArgumentException if the supplied class is {@code null}; if
+	 * @throws IllegalArgumentException if the supplied class is {@code null}; or if
 	 * neither {@code @ContextConfiguration} nor {@code @ContextHierarchy} is
-	 * <em>present</em> on the supplied class; or if a test class or composed annotation
+	 * <em>present</em> on the supplied class
+	 * @throws IllegalStateException if a test class or composed annotation
 	 * in the class hierarchy declares both {@code @ContextConfiguration} and
 	 * {@code @ContextHierarchy} as top-level annotations.
-	 * @throws IllegalStateException if no class in the class hierarchy declares
-	 * {@code @ContextHierarchy}.
 	 * @since 3.2.2
 	 * @see #buildContextHierarchyMap(Class)
 	 * @see #resolveContextConfigurationAttributes(Class)
@@ -95,11 +94,10 @@ abstract class ContextLoaderUtils {
 	@SuppressWarnings("unchecked")
 	static List<List<ContextConfigurationAttributes>> resolveContextHierarchyAttributes(Class<?> testClass) {
 		Assert.notNull(testClass, "Class must not be null");
-		Assert.state(findAnnotation(testClass, ContextHierarchy.class) != null, "@ContextHierarchy must be present");
 
-		final Class<ContextConfiguration> contextConfigType = ContextConfiguration.class;
-		final Class<ContextHierarchy> contextHierarchyType = ContextHierarchy.class;
-		final List<List<ContextConfigurationAttributes>> hierarchyAttributes = new ArrayList<List<ContextConfigurationAttributes>>();
+		Class<ContextConfiguration> contextConfigType = ContextConfiguration.class;
+		Class<ContextHierarchy> contextHierarchyType = ContextHierarchy.class;
+		List<List<ContextConfigurationAttributes>> hierarchyAttributes = new ArrayList<List<ContextConfigurationAttributes>>();
 
 		UntypedAnnotationDescriptor desc =
 				findAnnotationDescriptorForTypes(testClass, contextConfigType, contextHierarchyType);
@@ -124,7 +122,7 @@ abstract class ContextLoaderUtils {
 				throw new IllegalStateException(msg);
 			}
 
-			final List<ContextConfigurationAttributes> configAttributesList = new ArrayList<ContextConfigurationAttributes>();
+			List<ContextConfigurationAttributes> configAttributesList = new ArrayList<ContextConfigurationAttributes>();
 
 			if (contextConfigDeclaredLocally) {
 				ContextConfiguration contextConfiguration = AnnotationUtils.synthesizeAnnotation(

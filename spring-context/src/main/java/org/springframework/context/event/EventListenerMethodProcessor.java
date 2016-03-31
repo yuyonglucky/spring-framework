@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import org.apache.commons.logging.LogFactory;
 import org.springframework.aop.framework.autoproxy.AutoProxyUtils;
 import org.springframework.aop.scope.ScopedObject;
 import org.springframework.aop.scope.ScopedProxyUtils;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanInitializationException;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -38,8 +39,8 @@ import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.core.MethodIntrospector;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.core.annotation.AnnotationAwareOrderComparator;
-import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.util.Assert;
 
 /**
@@ -128,7 +129,7 @@ public class EventListenerMethodProcessor implements SmartInitializingSingleton,
 					new MethodIntrospector.MetadataLookup<EventListener>() {
 						@Override
 						public EventListener inspect(Method method) {
-							return AnnotationUtils.findAnnotation(method, EventListener.class);
+							return AnnotatedElementUtils.findMergedAnnotation(method, EventListener.class);
 						}
 					});
 			if (annotatedMethods.isEmpty()) {
@@ -142,7 +143,7 @@ public class EventListenerMethodProcessor implements SmartInitializingSingleton,
 				for (Method method : annotatedMethods.keySet()) {
 					for (EventListenerFactory factory : factories) {
 						if (factory.supportsMethod(method)) {
-							Method methodToUse = MethodIntrospector.selectInvocableMethod(
+							Method methodToUse = AopUtils.selectInvocableMethod(
 									method, this.applicationContext.getType(beanName));
 							ApplicationListener<?> applicationListener =
 									factory.createApplicationListener(beanName, targetType, methodToUse);

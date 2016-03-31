@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,6 @@ import org.springframework.http.converter.support.AllEncompassingFormHttpMessage
 import org.springframework.http.converter.xml.SourceHttpMessageConverter;
 import org.springframework.ui.ModelMap;
 import org.springframework.util.Assert;
-import org.springframework.util.ClassUtils;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.ReflectionUtils.MethodFilter;
 import org.springframework.web.accept.ContentNegotiationManager;
@@ -116,10 +115,6 @@ import org.springframework.web.util.WebUtils;
  */
 public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		implements BeanFactoryAware, InitializingBean {
-
-	private static final boolean completionStagePresent = ClassUtils.isPresent("java.util.concurrent.CompletionStage",
-			RequestMappingHandlerAdapter.class.getClassLoader());
-
 
 	private List<HandlerMethodArgumentResolver> customArgumentResolvers;
 
@@ -444,7 +439,14 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 
 	/**
 	 * Cache content produced by {@code @SessionAttributes} annotated handlers
-	 * for the given number of seconds. Default is 0, preventing caching completely.
+	 * for the given number of seconds.
+	 * <p>Possible values are:
+	 * <ul>
+	 * <li>-1: no generation of cache-related headers</li>
+	 * <li>0 (default value): "Cache-Control: no-store" will prevent caching</li>
+	 * <li>1 or higher: "Cache-Control: max-age=seconds" will ask to cache content;
+	 * not advised when dealing with session attributes</li>
+	 * </ul>
 	 * <p>In contrast to the "cacheSeconds" property which will apply to all general
 	 * handlers (but not to {@code @SessionAttributes} annotated handlers),
 	 * this setting will apply to {@code @SessionAttributes} handlers only.
@@ -592,6 +594,8 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		resolvers.add(new RequestHeaderMapMethodArgumentResolver());
 		resolvers.add(new ServletCookieValueMethodArgumentResolver(getBeanFactory()));
 		resolvers.add(new ExpressionValueMethodArgumentResolver(getBeanFactory()));
+		resolvers.add(new SessionAttributeMethodArgumentResolver());
+		resolvers.add(new RequestAttributeMethodArgumentResolver());
 
 		// Type-based argument resolution
 		resolvers.add(new ServletRequestMethodArgumentResolver());
@@ -631,6 +635,8 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		resolvers.add(new MatrixVariableMethodArgumentResolver());
 		resolvers.add(new MatrixVariableMapMethodArgumentResolver());
 		resolvers.add(new ExpressionValueMethodArgumentResolver(getBeanFactory()));
+		resolvers.add(new SessionAttributeMethodArgumentResolver());
+		resolvers.add(new RequestAttributeMethodArgumentResolver());
 
 		// Type-based argument resolution
 		resolvers.add(new ServletRequestMethodArgumentResolver());
@@ -666,10 +672,6 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		handlers.add(new CallableMethodReturnValueHandler());
 		handlers.add(new DeferredResultMethodReturnValueHandler());
 		handlers.add(new AsyncTaskMethodReturnValueHandler(this.beanFactory));
-		handlers.add(new ListenableFutureReturnValueHandler());
-		if (completionStagePresent) {
-			handlers.add(new CompletionStageReturnValueHandler());
-		}
 
 		// Annotation-based return value types
 		handlers.add(new ModelAttributeMethodProcessor(false));
@@ -714,14 +716,8 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 	protected ModelAndView handleInternal(HttpServletRequest request,
 			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception {
 
+		ModelAndView mav;
 		checkRequest(request);
-
-		if (getSessionAttributesHandler(handlerMethod).hasSessionAttributes()) {
-			applyCacheSeconds(response, this.cacheSecondsForSessionAttributeHandlers);
-		}
-		else {
-			prepareResponse(response);
-		}
 
 		// Execute invokeHandlerMethod in synchronized block if required.
 		if (this.synchronizeOnSession) {
@@ -729,12 +725,29 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 			if (session != null) {
 				Object mutex = WebUtils.getSessionMutex(session);
 				synchronized (mutex) {
-					return invokeHandlerMethod(request, response, handlerMethod);
+					mav = invokeHandlerMethod(request, response, handlerMethod);
 				}
+			}
+			else {
+				// No HttpSession available -> no mutex necessary
+				mav = invokeHandlerMethod(request, response, handlerMethod);
+			}
+		}
+		else {
+			// No synchronization on session demanded at all...
+			mav = invokeHandlerMethod(request, response, handlerMethod);
+		}
+
+		if (!response.containsHeader(HEADER_CACHE_CONTROL)) {
+			if (getSessionAttributesHandler(handlerMethod).hasSessionAttributes()) {
+				applyCacheSeconds(response, this.cacheSecondsForSessionAttributeHandlers);
+			}
+			else {
+				prepareResponse(response);
 			}
 		}
 
-		return invokeHandlerMethod(request, response, handlerMethod);
+		return mav;
 	}
 
 	/**
@@ -777,46 +790,50 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 			HttpServletResponse response, HandlerMethod handlerMethod) throws Exception {
 
 		ServletWebRequest webRequest = new ServletWebRequest(request, response);
+		try {
+			WebDataBinderFactory binderFactory = getDataBinderFactory(handlerMethod);
+			ModelFactory modelFactory = getModelFactory(handlerMethod, binderFactory);
 
-		WebDataBinderFactory binderFactory = getDataBinderFactory(handlerMethod);
-		ModelFactory modelFactory = getModelFactory(handlerMethod, binderFactory);
+			ServletInvocableHandlerMethod invocableMethod = createInvocableHandlerMethod(handlerMethod);
+			invocableMethod.setHandlerMethodArgumentResolvers(this.argumentResolvers);
+			invocableMethod.setHandlerMethodReturnValueHandlers(this.returnValueHandlers);
+			invocableMethod.setDataBinderFactory(binderFactory);
+			invocableMethod.setParameterNameDiscoverer(this.parameterNameDiscoverer);
 
-		ServletInvocableHandlerMethod invocableMethod = createInvocableHandlerMethod(handlerMethod);
-		invocableMethod.setHandlerMethodArgumentResolvers(this.argumentResolvers);
-		invocableMethod.setHandlerMethodReturnValueHandlers(this.returnValueHandlers);
-		invocableMethod.setDataBinderFactory(binderFactory);
-		invocableMethod.setParameterNameDiscoverer(this.parameterNameDiscoverer);
+			ModelAndViewContainer mavContainer = new ModelAndViewContainer();
+			mavContainer.addAllAttributes(RequestContextUtils.getInputFlashMap(request));
+			modelFactory.initModel(webRequest, mavContainer, invocableMethod);
+			mavContainer.setIgnoreDefaultModelOnRedirect(this.ignoreDefaultModelOnRedirect);
 
-		ModelAndViewContainer mavContainer = new ModelAndViewContainer();
-		mavContainer.addAllAttributes(RequestContextUtils.getInputFlashMap(request));
-		modelFactory.initModel(webRequest, mavContainer, invocableMethod);
-		mavContainer.setIgnoreDefaultModelOnRedirect(this.ignoreDefaultModelOnRedirect);
+			AsyncWebRequest asyncWebRequest = WebAsyncUtils.createAsyncWebRequest(request, response);
+			asyncWebRequest.setTimeout(this.asyncRequestTimeout);
 
-		AsyncWebRequest asyncWebRequest = WebAsyncUtils.createAsyncWebRequest(request, response);
-		asyncWebRequest.setTimeout(this.asyncRequestTimeout);
+			WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
+			asyncManager.setTaskExecutor(this.taskExecutor);
+			asyncManager.setAsyncWebRequest(asyncWebRequest);
+			asyncManager.registerCallableInterceptors(this.callableInterceptors);
+			asyncManager.registerDeferredResultInterceptors(this.deferredResultInterceptors);
 
-		WebAsyncManager asyncManager = WebAsyncUtils.getAsyncManager(request);
-		asyncManager.setTaskExecutor(this.taskExecutor);
-		asyncManager.setAsyncWebRequest(asyncWebRequest);
-		asyncManager.registerCallableInterceptors(this.callableInterceptors);
-		asyncManager.registerDeferredResultInterceptors(this.deferredResultInterceptors);
-
-		if (asyncManager.hasConcurrentResult()) {
-			Object result = asyncManager.getConcurrentResult();
-			mavContainer = (ModelAndViewContainer) asyncManager.getConcurrentResultContext()[0];
-			asyncManager.clearConcurrentResult();
-			if (logger.isDebugEnabled()) {
-				logger.debug("Found concurrent result value [" + result + "]");
+			if (asyncManager.hasConcurrentResult()) {
+				Object result = asyncManager.getConcurrentResult();
+				mavContainer = (ModelAndViewContainer) asyncManager.getConcurrentResultContext()[0];
+				asyncManager.clearConcurrentResult();
+				if (logger.isDebugEnabled()) {
+					logger.debug("Found concurrent result value [" + result + "]");
+				}
+				invocableMethod = invocableMethod.wrapConcurrentResult(result);
 			}
-			invocableMethod = invocableMethod.wrapConcurrentResult(result);
-		}
 
-		invocableMethod.invokeAndHandle(webRequest, mavContainer);
-		if (asyncManager.isConcurrentHandlingStarted()) {
-			return null;
-		}
+			invocableMethod.invokeAndHandle(webRequest, mavContainer);
+			if (asyncManager.isConcurrentHandlingStarted()) {
+				return null;
+			}
 
-		return getModelAndView(mavContainer, modelFactory, webRequest);
+			return getModelAndView(mavContainer, modelFactory, webRequest);
+		}
+		finally {
+			webRequest.requestCompleted();
+		}
 	}
 
 	/**
@@ -871,7 +888,7 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 		}
 		List<InvocableHandlerMethod> initBinderMethods = new ArrayList<InvocableHandlerMethod>();
 		// Global methods first
-		for (Entry<ControllerAdviceBean, Set<Method>> entry : this.initBinderAdviceCache .entrySet()) {
+		for (Entry<ControllerAdviceBean, Set<Method>> entry : this.initBinderAdviceCache.entrySet()) {
 			if (entry.getKey().isApplicableToBeanType(handlerType)) {
 				Object bean = entry.getKey().resolveBean();
 				for (Method method : entry.getValue()) {
@@ -916,7 +933,7 @@ public class RequestMappingHandlerAdapter extends AbstractHandlerMethodAdapter
 			return null;
 		}
 		ModelMap model = mavContainer.getModel();
-		ModelAndView mav = new ModelAndView(mavContainer.getViewName(), model);
+		ModelAndView mav = new ModelAndView(mavContainer.getViewName(), model, mavContainer.getStatus());
 		if (!mavContainer.isViewReference()) {
 			mav.setView((View) mavContainer.getView());
 		}

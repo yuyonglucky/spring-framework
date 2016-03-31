@@ -127,7 +127,7 @@ import org.springframework.context.ApplicationContextAware;
  * &lt;/bean
  * </pre>
  *
- * <p>Tested against Jackson 2.4, 2.5, 2.6; compatible with Jackson 2.0 and higher.
+ * <p>Compatible with Jackson 2.6 and higher, as of Spring 4.3.
  *
  * @author <a href="mailto:dmitry.katsubo@gmail.com">Dmitry Katsubo</a>
  * @author Rossen Stoyanchev
@@ -322,6 +322,15 @@ public class Jackson2ObjectMapperFactoryBean implements FactoryBean<ObjectMapper
 	 */
 	public void setIndentOutput(boolean indentOutput) {
 		this.builder.indentOutput(indentOutput);
+	}
+
+	/**
+	 * Define if a wrapper will be used for indexed (List, array) properties or not by
+	 * default (only applies to {@link XmlMapper}).
+	 * @since 4.3
+	 */
+	public void setDefaultUseWrapper(boolean defaultUseWrapper) {
+		this.builder.defaultUseWrapper(defaultUseWrapper);
 	}
 
 	/**

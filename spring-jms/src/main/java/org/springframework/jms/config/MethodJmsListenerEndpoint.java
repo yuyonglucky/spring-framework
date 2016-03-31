@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,10 @@ import java.util.Arrays;
 import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.aop.support.AopUtils;
 import org.springframework.beans.factory.BeanFactory;
+import org.springframework.beans.factory.BeanFactoryAware;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
-import org.springframework.core.annotation.AnnotationUtils;
+import org.springframework.beans.factory.config.EmbeddedValueResolver;
+import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.jms.listener.MessageListenerContainer;
 import org.springframework.jms.listener.adapter.MessagingMessageListenerAdapter;
 import org.springframework.jms.support.converter.MessageConverter;
@@ -33,6 +35,7 @@ import org.springframework.messaging.handler.annotation.support.MessageHandlerMe
 import org.springframework.messaging.handler.invocation.InvocableHandlerMethod;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+import org.springframework.util.StringValueResolver;
 
 /**
  * A {@link JmsListenerEndpoint} providing the method to invoke to process
@@ -42,7 +45,7 @@ import org.springframework.util.StringUtils;
  * @author Juergen Hoeller
  * @since 4.1
  */
-public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
+public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint implements BeanFactoryAware {
 
 	private Object bean;
 
@@ -52,11 +55,13 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 
 	private MessageHandlerMethodFactory messageHandlerMethodFactory;
 
+	private StringValueResolver embeddedValueResolver;
+
 	private BeanFactory beanFactory;
 
 
 	/**
-	 * Set the object instance that should manage this endpoint.
+	 * Set the actual bean instance to invoke this endpoint method on.
 	 */
 	public void setBean(Object bean) {
 		this.bean = bean;
@@ -67,7 +72,7 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 	}
 
 	/**
-	 * Set the method to invoke to process a message managed by this endpoint.
+	 * Set the method to invoke for processing a message managed by this endpoint.
 	 */
 	public void setMethod(Method method) {
 		this.method = method;
@@ -110,11 +115,23 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 	}
 
 	/**
-	 * Set the {@link BeanFactory} to use to resolve expressions (can be null).
+	 * Set a value resolver for embedded placeholders and expressions.
 	 */
+	public void setEmbeddedValueResolver(StringValueResolver embeddedValueResolver) {
+		this.embeddedValueResolver = embeddedValueResolver;
+	}
+
+	/**
+	 * Set the {@link BeanFactory} to use to resolve expressions (can be {@code null}).
+	 */
+	@Override
 	public void setBeanFactory(BeanFactory beanFactory) {
 		this.beanFactory = beanFactory;
+		if (this.embeddedValueResolver == null && beanFactory instanceof ConfigurableBeanFactory) {
+			this.embeddedValueResolver = new EmbeddedValueResolver((ConfigurableBeanFactory) beanFactory);
+		}
 	}
+
 
 	@Override
 	protected MessagingMessageListenerAdapter createMessageListener(MessageListenerContainer container) {
@@ -146,6 +163,7 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 
 	/**
 	 * Create an empty {@link MessagingMessageListenerAdapter} instance.
+	 * @return a new {@code MessagingMessageListenerAdapter} or subclass thereof
 	 */
 	protected MessagingMessageListenerAdapter createMessageListenerInstance() {
 		return new MessagingMessageListenerAdapter();
@@ -156,7 +174,7 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 	 */
 	protected String getDefaultResponseDestination() {
 		Method specificMethod = getMostSpecificMethod();
-		SendTo ann = AnnotationUtils.getAnnotation(specificMethod, SendTo.class);
+		SendTo ann = getSendTo(specificMethod);
 		if (ann != null) {
 			Object[] destinations = ann.value();
 			if (destinations.length != 1) {
@@ -168,15 +186,16 @@ public class MethodJmsListenerEndpoint extends AbstractJmsListenerEndpoint {
 		return null;
 	}
 
-	/**
-	 * Resolve the specified value if possible.
-	 * @see ConfigurableBeanFactory#resolveEmbeddedValue
-	 */
-	private String resolve(String value) {
-		if (this.beanFactory instanceof ConfigurableBeanFactory) {
-			return ((ConfigurableBeanFactory) this.beanFactory).resolveEmbeddedValue(value);
+	private SendTo getSendTo(Method specificMethod) {
+		SendTo ann = AnnotatedElementUtils.findMergedAnnotation(specificMethod, SendTo.class);
+		if (ann == null) {
+			ann = AnnotatedElementUtils.findMergedAnnotation(specificMethod.getDeclaringClass(), SendTo.class);
 		}
-		return value;
+		return ann;
+	}
+
+	private String resolve(String value) {
+		return (this.embeddedValueResolver != null ? this.embeddedValueResolver.resolveStringValue(value) : value);
 	}
 
 

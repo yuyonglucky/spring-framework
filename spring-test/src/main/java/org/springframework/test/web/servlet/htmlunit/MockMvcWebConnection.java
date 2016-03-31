@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -41,8 +41,7 @@ import org.springframework.util.Assert;
  * <pre class="code">
  * WebClient webClient = new WebClient();
  * MockMvc mockMvc = ...
- * MockMvcWebConnection webConnection = new MockMvcWebConnection(mockMvc);
- * mockConnection.setWebClient(webClient);
+ * MockMvcWebConnection webConnection = new MockMvcWebConnection(mockMvc, webClient);
  * webClient.setWebConnection(webConnection);
  *
  * // Use webClient as normal ...
@@ -63,6 +62,38 @@ public final class MockMvcWebConnection implements WebConnection {
 
 	private WebClient webClient;
 
+	/**
+	 * Create a new instance that assumes the context path of the application
+	 * is {@code ""} (i.e., the root context).
+	 * <p>For example, the URL {@code http://localhost/test/this} would use
+	 * {@code ""} as the context path.
+	 * @param mockMvc the {@code MockMvc} instance to use; never {@code null}
+	 * @param webClient the {@link WebClient} to use. never {@code null}
+	 */
+	public MockMvcWebConnection(MockMvc mockMvc, WebClient webClient) {
+		this(mockMvc, webClient, "");
+	}
+
+	/**
+	 * Create a new instance with the specified context path.
+	 * <p>The path may be {@code null} in which case the first path segment
+	 * of the URL is turned into the contextPath. Otherwise it must conform
+	 * to {@link javax.servlet.http.HttpServletRequest#getContextPath()}
+	 * which states that it can be an empty string and otherwise must start
+	 * with a "/" character and not end with a "/" character.
+	 * @param mockMvc the {@code MockMvc} instance to use; never {@code null}
+	 * @param webClient  the {@link WebClient} to use. never {@code null}
+	 * @param contextPath the contextPath to use
+	 */
+	public MockMvcWebConnection(MockMvc mockMvc, WebClient webClient, String contextPath) {
+		Assert.notNull(mockMvc, "MockMvc must not be null");
+		Assert.notNull(webClient, "WebClient must not be null");
+		validateContextPath(contextPath);
+
+		this.webClient = webClient;
+		this.mockMvc = mockMvc;
+		this.contextPath = contextPath;
+	}
 
 	/**
 	 * Create a new instance that assumes the context path of the application
@@ -70,7 +101,9 @@ public final class MockMvcWebConnection implements WebConnection {
 	 * <p>For example, the URL {@code http://localhost/test/this} would use
 	 * {@code ""} as the context path.
 	 * @param mockMvc the {@code MockMvc} instance to use; never {@code null}
+	 * @deprecated Use {@link #MockMvcWebConnection(MockMvc, WebClient)}
 	 */
+	@Deprecated
 	public MockMvcWebConnection(MockMvc mockMvc) {
 		this(mockMvc, "");
 	}
@@ -84,16 +117,12 @@ public final class MockMvcWebConnection implements WebConnection {
 	 * with a "/" character and not end with a "/" character.
 	 * @param mockMvc the {@code MockMvc} instance to use; never {@code null}
 	 * @param contextPath the contextPath to use
+	 * @deprecated use {@link #MockMvcWebConnection(MockMvc, WebClient, String)}
 	 */
+	@Deprecated
 	public MockMvcWebConnection(MockMvc mockMvc, String contextPath) {
-		Assert.notNull(mockMvc, "MockMvc must not be null");
-		validateContextPath(contextPath);
-
-		this.webClient = new WebClient();
-		this.mockMvc = mockMvc;
-		this.contextPath = contextPath;
+		this(mockMvc, new WebClient(), contextPath);
 	}
-
 
 	public void setWebClient(WebClient webClient) {
 		Assert.notNull(webClient, "WebClient must not be null");

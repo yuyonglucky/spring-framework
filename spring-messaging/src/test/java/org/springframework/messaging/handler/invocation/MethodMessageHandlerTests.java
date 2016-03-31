@@ -34,6 +34,7 @@ import org.junit.Test;
 import org.springframework.context.support.StaticApplicationContext;
 import org.springframework.core.MethodIntrospector;
 import org.springframework.messaging.Message;
+import org.springframework.messaging.converter.SimpleMessageConverter;
 import org.springframework.messaging.handler.DestinationPatternsMessageCondition;
 import org.springframework.messaging.handler.HandlerMethod;
 import org.springframework.messaging.handler.annotation.support.MessageMethodArgumentResolver;
@@ -196,7 +197,7 @@ public class MethodMessageHandlerTests {
 		@Override
 		protected List<? extends HandlerMethodArgumentResolver> initArgumentResolvers() {
 			List<HandlerMethodArgumentResolver> resolvers = new ArrayList<HandlerMethodArgumentResolver>();
-			resolvers.add(new MessageMethodArgumentResolver());
+			resolvers.add(new MessageMethodArgumentResolver(new SimpleMessageConverter()));
 			resolvers.addAll(getCustomArgumentResolvers());
 			return resolvers;
 		}
@@ -274,7 +275,7 @@ public class MethodMessageHandlerTests {
 		private static Map<Class<? extends Throwable>, Method> initExceptionMappings(Class<?> handlerType) {
 			Map<Class<? extends Throwable>, Method> result = new HashMap<Class<? extends Throwable>, Method>();
 			for (Method method : MethodIntrospector.selectMethods(handlerType, EXCEPTION_HANDLER_METHOD_FILTER)) {
-				for(Class<? extends Throwable> exception : getExceptionsFromMethodSignature(method)) {
+				for (Class<? extends Throwable> exception : getExceptionsFromMethodSignature(method)) {
 					result.put(exception, method);
 				}
 			}

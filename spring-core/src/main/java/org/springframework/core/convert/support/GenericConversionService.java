@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2015 the original author or authors.
+ * Copyright 2002-2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -103,7 +103,7 @@ public class GenericConversionService implements ConfigurableConversionService {
 	}
 
 	@Override
-	public void addConverter(Class<?> sourceType, Class<?> targetType, Converter<?, ?> converter) {
+	public <S, T> void addConverter(Class<S> sourceType, Class<T> targetType, Converter<? super S, ? extends T> converter) {
 		addConverter(new ConverterAdapter(
 				converter, ResolvableType.forClass(sourceType), ResolvableType.forClass(targetType)));
 	}
@@ -435,7 +435,7 @@ public class GenericConversionService implements ConfigurableConversionService {
 	/**
 	 * Key for use with the converter cache.
 	 */
-	private static final class ConverterCacheKey {
+	private static final class ConverterCacheKey implements Comparable<ConverterCacheKey> {
 
 		private final TypeDescriptor sourceType;
 
@@ -469,6 +469,17 @@ public class GenericConversionService implements ConfigurableConversionService {
 		public String toString() {
 			return ("ConverterCacheKey [sourceType = " + this.sourceType +
 					", targetType = " + this.targetType + "]");
+		}
+
+		@Override
+		public int compareTo(ConverterCacheKey other) {
+			int result = this.sourceType.getResolvableType().toString().compareTo(
+					other.sourceType.getResolvableType().toString());
+			if (result == 0) {
+				result = this.targetType.getResolvableType().toString().compareTo(
+						other.targetType.getResolvableType().toString());
+			}
+			return result;
 		}
 	}
 
